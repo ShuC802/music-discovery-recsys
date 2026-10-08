@@ -1,0 +1,35 @@
+{
+  "name": "SASRec(d=128, L=200, layers=2, neg=2048, p_last=0.5)",
+  "params": {
+    "dim": 128,
+    "max_len": 200,
+    "n_layers": 2,
+    "n_heads": 2,
+    "dropout": 0.2,
+    "lr": 0.001,
+    "batch_size": 128,
+    "n_neg": 2048,
+    "p_last": 0.5,
+    "steps_per_epoch": 400,
+    "loss_on": "all",
+    "recent_days": null
+  },
+  "epochs": 12,
+  "test": {
+    "recall@10": 0.022680968994004198,
+    "ndcg@10": 0.0204050185762614,
+    "hit_rate@10": 0.10815096733269902,
+    "recall@50": 0.04591518380398832,
+    "ndcg@50": 0.028033608655313166,
+    "hit_rate@50": 0.26815731049793845,
+    "coverage@10": 0.08964564514496334,
+    "avg_pop@10": 484.86370849609375,
+    "coverage@50": 0.24203431007687315,
+    "avg_pop@50": 460.3625183105469,
+    "n_eval_users": 6306,
+    "recall@10 | all targets": 0.05343860868945107,
+    "recall@10 | known-artist": 0.021953818520405916,
+    "recall@10 | new-artist": 0.01239365420353605,
+    "known-artist slots in top-10": 0.4679511487483978
+  }
+}

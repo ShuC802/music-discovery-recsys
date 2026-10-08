@@ -1,0 +1,26 @@
+# Data is large and licensed for non-commercial use: never commit it
+data/
+*.tar.gz
+*.parquet
+
+# Python / environments
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Model artifacts
+checkpoints/
+*.pt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Colab bundle
+*.zip
+
+notes/
+
+notes/

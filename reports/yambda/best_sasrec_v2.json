@@ -1,0 +1,37 @@
+{
+  "variant": "A first-listen loss",
+  "params": {
+    "dim": 128,
+    "max_len": 200,
+    "n_layers": 2,
+    "n_heads": 2,
+    "dropout": 0.2,
+    "lr": 0.001,
+    "batch_size": 128,
+    "n_neg": 2048,
+    "p_last": 0.5,
+    "steps_per_epoch": 400,
+    "loss_on": "first",
+    "recent_days": null
+  },
+  "best_epoch": 12,
+  "val": {
+    "recall@10": 0.025827965916905688,
+    "ndcg@10": 0.023598231780527133,
+    "hit_rate@10": 0.12046495244804509,
+    "recall@50": 0.045358301503747936,
+    "ndcg@50": 0.029583549770827947,
+    "hit_rate@50": 0.2636491722437478,
+    "coverage@10": 0.11479768138320061,
+    "avg_pop@10": 348.7346496582031,
+    "coverage@50": 0.28647120718746305,
+    "avg_pop@50": 330.0244445800781,
+    "n_eval_users": 5678,
+    "segments": {
+      "known-artist": 0.0246714827349472,
+      "new-artist": 0.014633145972377826
+    },
+    "minutes": 11.778597112496694,
+    "best_epoch": 12
+  }
+}

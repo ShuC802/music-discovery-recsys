@@ -1,0 +1,14 @@
+{
+  "params": {
+    "dim": 128,
+    "n_neg": 4,
+    "lr": 0.001,
+    "reg": 1e-05,
+    "batch_size": 16384,
+    "samples_per_epoch": 2000000,
+    "weighting": "log",
+    "half_life_days": 3
+  },
+  "best_epoch": 18,
+  "val_recall@10": 0.033380298227075264
+}

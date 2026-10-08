@@ -1,0 +1,20 @@
+{
+  "params": {
+    "factors": 512,
+    "regularization": 50.0,
+    "alpha": 30,
+    "iterations": 15,
+    "weighting": "log",
+    "half_life_days": 3
+  },
+  "val_recall@10": 0.03459670295263814,
+  "chosen_in": "notebooks/yambda/06_ials_refine.ipynb",
+  "notes": [
+    "Paired bootstrap over users (2000 resamples), validation split:",
+    "  vs MostPopular(last 7d): +47%, 95% CI [0.0076, 0.0145]",
+    "  vs notebook-04 winner (f=128, reg=0.05, alpha=10, 7d): +18%, CI [0.0031, 0.0072]",
+    "  half-life 3d vs 7d at these settings: +10%, CI [0.0012, 0.0053]",
+    "  f=512 vs f=128: +6.6%, CI [0.0001, 0.0041], p=0.017 -> not significant after Bonferroni (4 tests)",
+    "reg=50 and f=512 are at the edge of the searched grid; tuning stopped deliberately (diminishing returns, winner's curse)."
+  ]
+}
