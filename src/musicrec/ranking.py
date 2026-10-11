@@ -138,11 +138,62 @@ def add_features(cands: pd.DataFrame, split: Split, item_artist: pd.Series, sour
     return f
 
 
-def feature_columns(sources: list[str]) -> list[str]:
-    return ([f"score_{s}" for s in sources] + [f"rank_{s}" for s in sources] +
+ORGANIC_FEATURES = ["user_organic_share", "item_organic_share", "item_organic_listeners_7d", "item_skip_rate"]
+
+
+def add_organic_features(cands: pd.DataFrame, split: Split, events: pd.DataFrame,
+                         smoothing: float = 20.0) -> pd.DataFrame:
+    """Features from signals the split's train events don't keep: organic flag and skips.
+
+    events: the full Yambda event table (musicrec.yambda.build_events), raw IDs.
+    user_organic_share       share of the user's listens they chose themselves
+    item_organic_share       share of the track's listens that were organic (shrunk to the global mean)
+    item_organic_listeners_7d  distinct users who found the track themselves and played it, last 7 days
+    item_skip_rate           share of the track's listens played < 50% (shrunk to the global mean)
+    Only events before the split's train_end are used.
+    """
+    cut = to_cutoff(split.train_end)
+    ev = events[events["ts"] < cut]
+    u = pd.Index(split.user_ids).get_indexer(ev["user_id"].to_numpy())
+    i = pd.Index(split.item_keys).get_indexer(ev["track_key"].to_numpy())
+    org = ev["is_organic"].to_numpy()
+    skip = ~ev["is_full_listen"].to_numpy()
+
+    ku = u >= 0
+    n_u = np.bincount(u[ku], minlength=split.n_users)
+    user_org = np.bincount(u[ku], weights=org[ku], minlength=split.n_users) / np.maximum(n_u, 1)
+
+    ki = i >= 0
+    n_i = np.bincount(i[ki], minlength=split.n_items)
+    g_org, g_skip = org.mean(), skip.mean()
+    item_org = (np.bincount(i[ki], weights=org[ki], minlength=split.n_items) + smoothing * g_org) / (n_i + smoothing)
+    item_skip = (np.bincount(i[ki], weights=skip[ki], minlength=split.n_items) + smoothing * g_skip) / (n_i + smoothing)
+
+    rec = ki & org & ~skip & (ev["ts"].to_numpy() >= cut - 7 * DAY) & (u >= 0)
+    pairs = np.unique(_pack(u[rec], i[rec]))
+    org_listeners_7d = np.bincount((pairs & 0xFFFFFFFF).astype(np.int64), minlength=split.n_items)
+
+    cu, ci = cands["user_idx"].to_numpy(), cands["item_idx"].to_numpy()
+    cands["user_organic_share"] = user_org[cu]
+    cands["item_organic_share"] = item_org[ci]
+    cands["item_organic_listeners_7d"] = np.log1p(org_listeners_7d[ci])
+    cands["item_skip_rate"] = item_skip[ci]
+    return cands
+
+
+def feature_columns(sources: list[str], organic: bool = False) -> list[str]:
+    cols = ([f"score_{s}" for s in sources] + [f"rank_{s}" for s in sources] +
             ["item_pop_all", "item_pop_7d", "item_pop_30d", "item_trend", "item_age_days", "artist_pop_7d",
              "user_artist_plays", "user_artist_plays_7d", "user_events_log", "user_events_7d_log",
              "user_days_since_last", "n_sources"])
+    return cols + (ORGANIC_FEATURES if organic else [])
+
+
+def graded_relevance(cands: pd.DataFrame) -> pd.Series:
+    """0 = not a discovery, 1 = discovery by an artist the user knows, 2 = discovery by a NEW artist.
+    With LambdaRank's label_gain = [0, 1, w], a new-artist hit counts w times a familiar one."""
+    new_artist = cands["user_artist_plays"].fillna(0) == 0
+    return (cands["label"] * np.where(new_artist, 2, 1)).astype(np.int8)
 
 
 # ------------------------------------------------------------------ scoring wrappers
@@ -174,11 +225,12 @@ def rrf_scores(cands: pd.DataFrame, sources: list[str], k: int = 60) -> pd.Serie
 
 # ------------------------------------------------------------------ LightGBM ranker
 
-def fit_ranker(df: pd.DataFrame, features: list[str], seed: int = 42, **params):
-    """LambdaRank on users with >= 1 positive candidate; 10% of those users held out for early stopping."""
+def fit_ranker(df: pd.DataFrame, features: list[str], seed: int = 42, label_col: str = "label", **params):
+    """LambdaRank on users with >= 1 positive candidate; 10% of those users held out for early stopping.
+    label_col can be graded (see graded_relevance) together with params label_gain=[0, 1, w]."""
     from lightgbm import LGBMRanker, early_stopping
 
-    pos_users = df.groupby("user_idx")["label"].max()
+    pos_users = df.groupby("user_idx")[label_col].max()
     users = pos_users.index[pos_users > 0].to_numpy()
     rng = np.random.default_rng(seed)
     hold = set(rng.choice(users, size=max(1, len(users) // 10), replace=False))
@@ -193,8 +245,8 @@ def fit_ranker(df: pd.DataFrame, features: list[str], seed: int = 42, **params):
     model = LGBMRanker(**cfg)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")                  # lightgbm API deprecation notices
-        model.fit(tr[features], tr["label"], group=tr.groupby("user_idx", sort=True).size().to_numpy(),
-                  eval_set=[(va[features], va["label"])],
+        model.fit(tr[features], tr[label_col], group=tr.groupby("user_idx", sort=True).size().to_numpy(),
+                  eval_set=[(va[features], va[label_col])],
                   eval_group=[va.groupby("user_idx", sort=True).size().to_numpy()],
                   eval_at=[10], callbacks=[early_stopping(50, verbose=False)])
     return model
