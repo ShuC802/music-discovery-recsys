@@ -38,3 +38,7 @@ DAY = 86_400
 # Cut points (seconds). Two-week windows = two full weekly cycles.
 YAMBDA_VAL_TRAIN_END, YAMBDA_VAL_EVAL_END = 273 * DAY, 287 * DAY
 YAMBDA_TEST_TRAIN_END, YAMBDA_TEST_EVAL_END = 287 * DAY, 301 * DAY
+# Earlier window used only to TRAIN the two-stage ranker (labels from days 259-273),
+# so the ranker never sees the window it is evaluated on.
+YAMBDA_SPLIT_RANK_DIR = YAMBDA_DIR / "split_rank"
+YAMBDA_RANK_TRAIN_END, YAMBDA_RANK_EVAL_END = 259 * DAY, 273 * DAY

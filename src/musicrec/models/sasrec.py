@@ -189,6 +189,18 @@ class SASRec:
             self.module_.load_state_dict(best_state)
         return self
 
+    @classmethod
+    def from_checkpoint(cls, path, split: Split, device: str | None = None) -> "SASRec":
+        """Rebuild a trained model (saved as {"state_dict", "params", ...}) for scoring on `split`."""
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        m = cls(**ckpt["params"], device=device)
+        m.n_items_ = split.n_items
+        m.seqs_ = build_sequences(split)
+        m.module_ = SASRecModule(split.n_items, m.dim, m.max_len, m.n_layers, m.n_heads, m.dropout).to(m.device)
+        m.module_.load_state_dict(ckpt["state_dict"])
+        m.best_epoch_ = ckpt.get("best_epoch")
+        return m
+
     # ------------------------------------------------------------------ scoring
     @torch.no_grad()
     def score(self, users: np.ndarray) -> np.ndarray:
