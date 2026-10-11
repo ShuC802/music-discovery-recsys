@@ -3,10 +3,11 @@
 Recommending tracks a listener has never played, on 46M listening events from Yandex Music.
 Models are trained on the past and judged on what users discover over the next two weeks.
 
-The final system pulls candidates from iALS, SASRec and recent popularity and re-ranks them with
-LightGBM: **recall@10 0.049 on the test window, +47% over a tuned iALS and +88% over popularity.**
+The final system pulls candidates from iALS, SASRec, BPR and recent popularity and re-ranks them with
+LightGBM: **recall@10 0.053 on the test window, +59% over a tuned iALS and twice popularity.** Weighting
+new-artist discoveries 2x trades 8% of that for 19% more hits on artists the user has never played.
 
-![Test results](reports/figures/yambda/y16_test_results.png)
+![Test results](reports/figures/yambda/y17_test_results.png)
 
 ## The task
 
@@ -36,18 +37,21 @@ track played. Not included in this repo.
 
 Test window, 6,306 users with at least one discovery.
 
-| Model | recall@10 | hit rate@10 | coverage@10 | recall@10 (validation) |
-|---|---|---|---|---|
-| Two-stage: iALS + SASRec + popularity → LightGBM | **0.0490** | **20.9%** | 7.0% | 0.0455 |
-| Rank fusion of the same three (RRF, no training) | 0.0349 | 16.5% | 5.9% | 0.0387 |
-| iALS, tuned | 0.0334 | 15.1% | 5.6% | 0.0346 |
-| BPR matrix factorization (PyTorch) | 0.0327 | 14.8% | 3.4% | 0.0334 |
-| iALS, first pass | 0.0305 | 14.2% | 3.9% | 0.0294 |
-| Most popular, last 7 days | 0.0261 | 11.0% | 0.06% | 0.0235 |
-| SASRec (PyTorch Transformer) | 0.0227 | 10.8% | 9.0% | 0.0268 |
-| Most popular, all time | 0.0137 | 6.1% | 0.09% | 0.0121 |
+| Model | recall@10 | new-artist recall@10 | hit rate@10 | coverage@10 | recall@10 (validation) |
+|---|---|---|---|---|---|
+| Two-stage ranker | **0.0529** | 0.0185 | **22.2%** | 6.1% | 0.0524 |
+| Two-stage ranker, new artists weighted 2x | 0.0489 | 0.0220 | 21.1% | 6.2% | 0.0532 |
+| Two-stage ranker, first version | 0.0490 | 0.0157 | 20.9% | 7.0% | 0.0455 |
+| Rank fusion, no training (RRF) | 0.0349 | – | 16.5% | 5.9% | 0.0387 |
+| iALS, tuned | 0.0334 | 0.0169 | 15.1% | 5.6% | 0.0346 |
+| BPR matrix factorization (PyTorch) | 0.0327 | 0.0225 | 14.8% | 3.4% | 0.0334 |
+| iALS, first pass | 0.0305 | 0.0174 | 14.2% | 3.9% | 0.0294 |
+| Most popular, last 7 days | 0.0261 | 0.0244 | 11.0% | 0.06% | 0.0235 |
+| SASRec (PyTorch Transformer) | 0.0227 | 0.0124 | 10.8% | 9.0% | 0.0268 |
+| Most popular, all time | 0.0137 | 0.0134 | 6.1% | 0.09% | 0.0121 |
 
-- Two-stage vs. iALS: +47% (95% CI +38% to +56%). iALS vs. last-7-day popularity: +28% (CI +15% to +40%).
+- Two-stage ranker: iALS, SASRec, BPR and popularity candidates; LightGBM LambdaRank on their scores, track recency and popularity, organic-listening signals and artist familiarity. The first version had three sources and no organic features.
+- Two-stage vs. first version: +8% (95% CI +3% to +13%). First version vs. iALS: +47% (CI +38% to +56%). iALS vs. last-7-day popularity: +28% (CI +15% to +40%).
 - iALS vs. BPR: +2%, not significant. RRF vs. iALS on test: +5%, not significant.
 - ItemKNN matched popularity on validation and took 17x longer to train than iALS, so it was dropped.
 
@@ -71,14 +75,21 @@ is best on those tracks (recall 0.038 vs. 0.028 for BPR). BPR gives 39% and is b
 
 **5. Combining models works because they find different things.** 15.1% of users get a hit from iALS, 10.8%
 from SASRec and 20.7% from either; per-user recall correlates at only 0.37. A LightGBM ranker over the
-union of candidates turns this into +47%. Its most useful features are track age, iALS rank, 30-day
-popularity and trend, and how often the user has played the track's artist. Nearly all of the gain is on
-tracks by artists the user already knows (validation recall 0.041 → 0.059); new-artist recall did not move.
+union of candidates turns this into +59%. Its most useful features are track age, how often the user has
+played the track's artist, iALS rank, and the share of the track's listens that were organic. Adding the
+organic-listening features alone was worth +12% on validation.
 
 **6. The first ranker result was leaked.** Cross-validating the ranker by user within the validation window
 showed +54%. But users in the same two weeks discover the same tracks (65% overlap between folds), so the
 ranker was memorising which tracks blew up in that window. Training it on an earlier window (labels from
-days 259–273) and evaluating on the next one gave an honest +31% on validation, then +47% on test.
+days 259–273) and evaluating on the next one gave an honest +31% on validation.
+
+**7. New-artist discovery is a dial, not a free win.** Without help, the ranker's gains are almost all on
+artists the user already knows. Counting a new-artist discovery `w` times in the ranking loss moves along a
+curve: on validation, w = 8 nearly doubled new-artist recall for a 5% drop overall. w = 2 looked free on
+validation; on test it cost 8% overall for 19% more new-artist hits.
+
+![New-artist trade-off](reports/figures/yambda/y17_new_artist_tradeoff.png)
 
 ## Repo
 
@@ -89,7 +100,7 @@ src/musicrec/
   evaluation.py      metrics, paired bootstrap, artist segments
   ranking.py         candidate generation, ranker features, LightGBM ranker
   models/            popularity, ItemKNN, iALS, BPR, SASRec
-notebooks/yambda/    01-16 in order (08-10, 12 and 15 run on a Colab GPU; 13 is the leaky version, kept on purpose)
+notebooks/yambda/    01-17 in order (08-10, 12 and 15 run on a Colab GPU; 13 is the leaky version, kept on purpose)
 notebooks/lastfm/    first version of the project on Last.fm-1K
 reports/             result tables and figures
 ```
@@ -99,7 +110,7 @@ reports/             result tables and figures
 ```bash
 uv sync
 # put Yambda flat/50m/*.parquet and artist_item_mapping.parquet in data/raw/yambda/
-# then run notebooks/yambda/01-16 in order
+# then run notebooks/yambda/01-17 in order
 ```
 
 ## Limitations
@@ -110,6 +121,6 @@ uv sync
 
 ## Next
 
-- Weight new-artist discoveries in the ranker objective, since the current ranker only improves familiar artists.
-- Add BPR as a fourth candidate source (it is the strongest model on new artists).
-- Audio embeddings for cold-start tracks.
+- Audio embeddings for cold-start tracks, the 24% that collaborative filtering cannot reach.
+- Set the new-artist weight per user, e.g. higher for users who already find most of their music themselves.
+- Offline gains on one window are not a launch decision; the next step would be an A/B test on discovery rate and skips.
