@@ -264,3 +264,59 @@ def cross_val_ranker(df: pd.DataFrame, features: list[str], n_folds: int = 2, se
         model = fit_ranker(df[fold != k], features, seed=seed + k, **params)
         pred[fold == k] = model.predict(df.loc[fold == k, features])
     return pd.Series(pred, index=df.index)
+
+
+# ------------------------------------------------------------------ per-user new-artist weight
+
+def user_exploration(split: Split, events: pd.DataFrame, item_artist: pd.Series,
+                     days: int = 60, smoothing: float = 20.0) -> np.ndarray:
+    """Per user (indexed by user_idx): share of recent discoveries that were by a new artist.
+
+    A discovery = the user's first ever play of a track, organic and played >= 50%, in the
+    `days` before train_end. It is a new-artist discovery if that play was also the user's
+    first play of the artist. Shrunk toward the global share, so users with few discoveries
+    get roughly the average. Only events before train_end are used.
+    """
+    cut = to_cutoff(split.train_end)
+    ev = events[events["ts"] < cut]                        # sorted by user, then time
+    u = pd.Index(split.user_ids).get_indexer(ev["user_id"].to_numpy())
+    keep = u >= 0
+    ev, u = ev[keep], u[keep].astype(np.int64)
+    t = pd.factorize(ev["track_key"])[0].astype(np.int64)
+    a = pd.factorize(item_artist.reindex(ev["track_key"].to_numpy()).to_numpy())[0].astype(np.int64)
+
+    # np.unique returns the first occurrence, which is the earliest play since events are time-sorted
+    first_track = np.zeros(len(ev), bool)
+    first_track[np.unique(_pack(u, t), return_index=True)[1]] = True
+    first_artist = np.zeros(len(ev), bool)
+    has_a = a >= 0
+    idx_a = np.flatnonzero(has_a)
+    first_artist[idx_a[np.unique(_pack(u[has_a], a[has_a]), return_index=True)[1]]] = True
+
+    disc = (first_track & has_a & ev["is_organic"].to_numpy() & ev["is_full_listen"].to_numpy()
+            & (ev["ts"].to_numpy() >= cut - days * DAY))
+    n_disc = np.bincount(u[disc], minlength=split.n_users)
+    n_new = np.bincount(u[disc & first_artist], minlength=split.n_users)
+    g = n_new.sum() / max(n_disc.sum(), 1)
+    return (n_new + smoothing * g) / (n_disc + smoothing)
+
+
+def per_user_blend(cands: pd.DataFrame, col_a: str, col_b: str, lam: np.ndarray) -> np.ndarray:
+    """(1 - lam[u]) * pct_rank(col_a) + lam[u] * pct_rank(col_b), ranks taken within each user.
+
+    lam: one value per user_idx. lam = 0 reproduces col_a's order, lam = 1 col_b's.
+    """
+    g = cands.groupby("user_idx")
+    ra, rb = g[col_a].rank(pct=True).to_numpy(), g[col_b].rank(pct=True).to_numpy()
+    l = lam[cands["user_idx"].to_numpy()]
+    return (1 - l) * ra + l * rb
+
+
+def spread_lambda(explore: np.ndarray, users: np.ndarray, mean: float) -> np.ndarray:
+    """Per-user blend weight with a fixed average: low explorers get less than `mean`, high
+    explorers more. lam = mean + (pct - 0.5) * 2 * min(mean, 1 - mean), pct = the user's
+    exploration percentile among `users`. Users outside `users` get `mean`."""
+    lam = np.full(len(explore), mean)
+    pct = (pd.Series(explore[users]).rank().to_numpy() - 0.5) / len(users)   # mean exactly 0.5
+    lam[users] = mean + (pct - 0.5) * 2 * min(mean, 1 - mean)
+    return lam

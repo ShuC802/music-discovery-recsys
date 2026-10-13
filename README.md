@@ -4,8 +4,9 @@ Recommending tracks a listener has never played, on 46M listening events from Ya
 Models are trained on the past and judged on what users discover over the next two weeks.
 
 The final system pulls candidates from iALS, SASRec, BPR and recent popularity and re-ranks them with
-LightGBM: **recall@10 0.053 on the test window, +59% over a tuned iALS and twice popularity.** Weighting
-new-artist discoveries 2x trades 8% of that for 19% more hits on artists the user has never played.
+LightGBM: **recall@10 0.053 on the test window, +59% over a tuned iALS and twice popularity.** Blending it
+with a ranker trained to favour new artists gives a dial that is set at serving time: one setting keeps 98% of
+that recall and finds 45% more tracks by artists the user has never played.
 
 ![Test results](reports/figures/yambda/y17_test_results.png)
 
@@ -32,6 +33,7 @@ track played. Not included in this repo.
 - Every decision (filters, hyperparameters, epochs, ranker features) was made on validation. Each model was run on test once.
 - A track needs at least 5 listeners in training to be recommendable, a user at least 10 tracks. 24% of test discoveries are therefore out of reach for any model here (brand-new tracks or new users).
 - Metrics: recall@10 (hits / min(10, number of discoveries)), NDCG@10, hit rate@10 (share of users with at least one hit), catalogue coverage. Gaps between models are tested with a paired bootstrap over users.
+- Retraining the LightGBM ranker with a different seed moves test recall by up to ±3%, so single-run ranker gaps smaller than that are not treated as real.
 
 ## Results
 
@@ -40,7 +42,6 @@ Test window, 6,306 users with at least one discovery.
 | Model | recall@10 | new-artist recall@10 | hit rate@10 | coverage@10 | recall@10 (validation) |
 |---|---|---|---|---|---|
 | Two-stage ranker | **0.0529** | 0.0185 | **22.2%** | 6.1% | 0.0524 |
-| Two-stage ranker, new artists weighted 2x | 0.0489 | 0.0220 | 21.1% | 6.2% | 0.0532 |
 | Two-stage ranker, first version | 0.0490 | 0.0157 | 20.9% | 7.0% | 0.0455 |
 | Rank fusion, no training (RRF) | 0.0349 | – | 16.5% | 5.9% | 0.0387 |
 | iALS, tuned | 0.0334 | 0.0169 | 15.1% | 5.6% | 0.0346 |
@@ -51,7 +52,8 @@ Test window, 6,306 users with at least one discovery.
 | Most popular, all time | 0.0137 | 0.0134 | 6.1% | 0.09% | 0.0121 |
 
 - Two-stage ranker: iALS, SASRec, BPR and popularity candidates; LightGBM LambdaRank on their scores, track recency and popularity, organic-listening signals and artist familiarity. The first version had three sources and no organic features.
-- Two-stage vs. first version: +8% (95% CI +3% to +13%). First version vs. iALS: +47% (CI +38% to +56%). iALS vs. last-7-day popularity: +28% (CI +15% to +40%).
+- Ranker rows are one training run (seed 42). Over 3 seeds the final ranker averages 0.0525 (sd 0.0014).
+- Two-stage vs. first version: +8% (95% CI +3% to +13%; the CI covers user sampling, not ranker seed). First version vs. iALS: +47% (CI +38% to +56%). iALS vs. last-7-day popularity: +28% (CI +15% to +40%).
 - iALS vs. BPR: +2%, not significant. RRF vs. iALS on test: +5%, not significant.
 - ItemKNN matched popularity on validation and took 17x longer to train than iALS, so it was dropped.
 
@@ -84,12 +86,33 @@ showed +54%. But users in the same two weeks discover the same tracks (65% overl
 ranker was memorising which tracks blew up in that window. Training it on an earlier window (labels from
 days 259–273) and evaluating on the next one gave an honest +31% on validation.
 
-**7. New-artist discovery is a dial, not a free win.** Without help, the ranker's gains are almost all on
-artists the user already knows. Counting a new-artist discovery `w` times in the ranking loss moves along a
-curve: on validation, w = 8 nearly doubled new-artist recall for a 5% drop overall. w = 2 looked free on
-validation; on test it cost 8% overall for 19% more new-artist hits.
+**7. New-artist discovery is a dial, and blending two rankers turns it more reliably than retraining.** Without help,
+the ranker's gains are almost all on artists the user already knows. Counting a new-artist discovery `w` times
+in the ranking loss shifts the balance, but each retrained ranker is noisy: over 3 seeds, w = 2 ranged from
+0.0489 to 0.0533 on test. Blending the rankings of the w = 1 and w = 8 models, `(1 − m)·w1 + m·w8`, varies less
+across seeds, matched validation closely, and needs no retraining to move along the curve.
 
-![New-artist trade-off](reports/figures/yambda/y17_new_artist_tradeoff.png)
+Test, mean of 3 seeds:
+
+| Ranker | recall@10 | new-artist recall@10 |
+|---|---|---|
+| w = 1 | 0.0525 | 0.0186 |
+| w = 2, retrained | 0.0509 | 0.0241 |
+| Blend, m = 0.25 | 0.0522 | 0.0238 |
+| Blend, m = 0.5 | 0.0517 | 0.0270 |
+| Blend, m = 0.75 | 0.0503 | 0.0292 |
+| w = 8 | 0.0485 | 0.0319 |
+
+m = 0.25 matches w = 2 on new artists with higher overall recall. m = 0.75 was the setting chosen on
+validation; against w = 1 it gives +55% new-artist recall for −5% overall (both significant).
+
+![New-artist trade-off](reports/figures/yambda/y19_blend_test.png)
+
+**8. Setting the dial per user did not help.** Users who found more new artists before the cutoff do find
+more afterwards (46% of discoveries for the bottom fifth, 65% for the top fifth). But a per-user blend weight
+did no better than one weight for everyone, and the same signal as a ranker feature made things worse. Even the
+least exploratory users find almost half of their new music from unfamiliar artists, so there is little to
+personalize.
 
 ## Repo
 
@@ -100,7 +123,7 @@ src/musicrec/
   evaluation.py      metrics, paired bootstrap, artist segments
   ranking.py         candidate generation, ranker features, LightGBM ranker
   models/            popularity, ItemKNN, iALS, BPR, SASRec
-notebooks/yambda/    01-17 in order (08-10, 12 and 15 run on a Colab GPU; 13 is the leaky version, kept on purpose)
+notebooks/yambda/    01-19 in order (08-10, 12 and 15 run on a Colab GPU; 13 is the leaky version, kept on purpose)
 notebooks/lastfm/    first version of the project on Last.fm-1K
 reports/             result tables and figures
 ```
@@ -110,7 +133,7 @@ reports/             result tables and figures
 ```bash
 uv sync
 # put Yambda flat/50m/*.parquet and artist_item_mapping.parquet in data/raw/yambda/
-# then run notebooks/yambda/01-17 in order
+# then run notebooks/yambda/01-19 in order
 ```
 
 ## Limitations
@@ -122,5 +145,3 @@ uv sync
 ## Next
 
 - Audio embeddings for cold-start tracks, the 24% that collaborative filtering cannot reach.
-- Set the new-artist weight per user, e.g. higher for users who already find most of their music themselves.
-- Offline gains on one window are not a launch decision; the next step would be an A/B test on discovery rate and skips.
